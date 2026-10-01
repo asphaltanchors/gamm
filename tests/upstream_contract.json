@@ -1,0 +1,119 @@
+{
+  "resources": [
+    "resource://discovery-document",
+    "resource://metrics",
+    "resource://release-notes",
+    "resource://segments"
+  ],
+  "tools": {
+    "customers_list_accessible_customers": {
+      "additionalProperties": false,
+      "properties": {},
+      "type": "object"
+    },
+    "metadata_get_resource_metadata": {
+      "additionalProperties": false,
+      "properties": {
+        "login_customer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional manager customer ID to use as the login-customer-id header."
+        },
+        "resource_name": {
+          "description": "The name of the Google Ads resource (e.g., 'campaign', 'ad_group').",
+          "type": "string"
+        }
+      },
+      "required": [
+        "resource_name"
+      ],
+      "type": "object"
+    },
+    "search_search": {
+      "additionalProperties": false,
+      "properties": {
+        "conditions": {
+          "default": [],
+          "description": "List of conditions to filter the data, combined using AND clauses",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "customer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            }
+          ],
+          "description": "The id of the customer"
+        },
+        "fields": {
+          "description": "The fields to fetch",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "limit": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "The maximum number of rows to return"
+        },
+        "login_customer_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional manager customer ID to use as the login-customer-id header."
+        },
+        "orderings": {
+          "default": [],
+          "description": "How the data is ordered",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "resource": {
+          "description": "The resource to return fields from",
+          "type": "string"
+        }
+      },
+      "required": [
+        "customer_id",
+        "fields",
+        "resource"
+      ],
+      "type": "object"
+    }
+  }
+}

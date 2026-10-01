@@ -1,0 +1,3 @@
+# Google's official Google Ads MCP server, run unmodified behind gamm.
+# To upgrade: change the pin, then see docs/updating.md.
+google-ads-mcp==0.0.4

@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{% block title %}gamm{% endblock %}</title>
+  <link rel="stylesheet" href="/static/gamm.css">
+  <script src="/static/gamm.js" defer></script>
+</head>
+<body>
+  <header class="top">
+    <a href="/" class="brand">gamm</a>
+    <span class="muted">Google Ads changes</span>
+  </header>
+  <main>
+    {% block main %}{% endblock %}
+  </main>
+</body>
+</html>

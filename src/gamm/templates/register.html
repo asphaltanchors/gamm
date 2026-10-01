@@ -1,0 +1,12 @@
+{% extends "base.html" %}
+{% block title %}Add a passkey · gamm{% endblock %}
+{% block main %}
+<h1>Add a passkey</h1>
+<p>This passkey will be able to approve Google Ads changes for {{ config.approver_name }}. Register it on a device only you use.</p>
+<section class="decide" id="register" data-invite="{{ invite }}">
+  <label for="label">Name for this passkey</label>
+  <input id="label" type="text" maxlength="60" placeholder="e.g. MacBook, iPhone" autocomplete="off">
+  <button type="button" class="approve" id="register-button">Create passkey</button>
+  <p class="result" id="register-result" role="status"></p>
+</section>
+{% endblock %}

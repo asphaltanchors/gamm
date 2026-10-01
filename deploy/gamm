@@ -1,0 +1,9 @@
+#!/bin/sh
+# Admin wrapper installed as /usr/local/bin/gamm: runs the gamm command as the
+# service user, so files it creates stay readable by the service. Root only.
+set -eu
+if [ "$(id -u)" -ne 0 ]; then
+  echo "gamm: run as root (e.g. sudo gamm $*)" >&2
+  exit 1
+fi
+exec runuser -u gamm -- env GAMM_CONFIG=/etc/gamm/config.toml HOME=/var/lib/gamm /opt/gamm/app/.venv/bin/gamm "$@"

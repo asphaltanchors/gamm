@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block main %}
+{% if not has_passkeys %}
+<p class="notice">No passkey is registered yet, so nothing can be approved. On the server, run <code>gamm passkeys invite</code> and open the link it prints.</p>
+{% endif %}
+<h1>Waiting on you</h1>
+{% set waiting = open_changes | selectattr("status", "equalto", "proposed") | list %}
+{% if waiting %}
+<ul class="cards">
+  {% for c in waiting %}
+  <li><a href="/changes/{{ c.change_id }}">
+    <span class="status status-{{ c.status }}">{{ c.status }}</span>
+    <strong>#{{ c.change_id }} {{ c.title }}</strong>
+    {% for line in c.summary %}<span class="line">{{ line }}</span>{% endfor %}
+    <span class="muted">Proposed by {{ c.proposed_by }}, {{ c.proposed_at | local }}</span>
+  </a></li>
+  {% endfor %}
+</ul>
+{% else %}
+<p class="muted">Nothing is waiting for approval.</p>
+{% endif %}
+
+<h2>Recent</h2>
+<table class="list">
+  <thead><tr><th>#</th><th>Status</th><th>Change</th><th>Proposed</th></tr></thead>
+  <tbody>
+  {% for c in recent %}
+  <tr>
+    <td><a href="/changes/{{ c.change_id }}">{{ c.change_id }}</a></td>
+    <td><span class="status status-{{ c.status }}">{{ c.status | replace("_", " ") }}</span></td>
+    <td><a href="/changes/{{ c.change_id }}">{{ c.title }}</a></td>
+    <td class="muted">{{ c.proposed_at | local }}</td>
+  </tr>
+  {% else %}
+  <tr><td colspan="4" class="muted">No changes yet.</td></tr>
+  {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

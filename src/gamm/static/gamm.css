@@ -1,0 +1,163 @@
+:root {
+  --bg: #fbfbf9;
+  --fg: #1d1d1b;
+  --muted: #6b6b66;
+  --line: #e2e1dc;
+  --card: #ffffff;
+  --accent: #1f6f4a;
+  --accent-fg: #ffffff;
+  --danger: #a33a2c;
+  --warn-bg: #fff6dc;
+  --warn-line: #e8d28a;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #161615;
+    --fg: #ecebe6;
+    --muted: #a19f97;
+    --line: #34332f;
+    --card: #1f1f1d;
+    --accent: #3fa877;
+    --accent-fg: #0c1a12;
+    --danger: #e0715f;
+    --warn-bg: #3a3218;
+    --warn-line: #6b5a22;
+  }
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font: 16px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+}
+
+main { max-width: 760px; margin: 0 auto; padding: 16px 16px 64px; }
+
+.top {
+  display: flex;
+  gap: 12px;
+  align-items: baseline;
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--line);
+}
+
+.brand { font-weight: 700; color: var(--fg); text-decoration: none; }
+
+a { color: var(--accent); }
+
+h1 { font-size: 1.5rem; line-height: 1.25; margin: 16px 0 8px; }
+h2 { font-size: 1.1rem; margin: 24px 0 8px; }
+
+.muted { color: var(--muted); }
+.small { font-size: 0.875rem; }
+.crumbs { margin: 0; font-size: 0.875rem; }
+
+section { margin: 16px 0; }
+
+.what {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--accent);
+  border-radius: 8px;
+  padding: 4px 16px 8px;
+}
+
+.what ol { padding-left: 20px; font-weight: 600; }
+
+.claims dl { margin: 0; }
+.claims dt { font-weight: 600; margin-top: 8px; }
+.claims dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+.decide { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+.decide p, .decide label, .decide input { flex-basis: 100%; }
+
+button {
+  font: inherit;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 12px 20px;
+  cursor: pointer;
+  border: 1px solid var(--line);
+  background: var(--card);
+  color: var(--fg);
+}
+
+button.approve { background: var(--accent); color: var(--accent-fg); border-color: var(--accent); }
+button.reject { color: var(--danger); }
+button:disabled { opacity: 0.5; cursor: default; }
+
+input[type="text"] {
+  font: inherit;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--fg);
+  max-width: 360px;
+}
+
+.result.ok { color: var(--accent); }
+.result.bad { color: var(--danger); }
+
+.notice {
+  background: var(--warn-bg);
+  border: 1px solid var(--warn-line);
+  border-radius: 8px;
+  padding: 10px 14px;
+}
+
+.status {
+  display: inline-block;
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.status-proposed { color: #8a5a00; border-color: var(--warn-line); background: var(--warn-bg); }
+.status-approved, .status-applied { color: var(--accent); border-color: var(--accent); }
+.status-failed, .status-stale, .status-applied_unverified, .status-interrupted { color: var(--danger); border-color: var(--danger); }
+
+.cards { list-style: none; padding: 0; display: grid; gap: 12px; }
+.cards a {
+  display: grid;
+  gap: 4px;
+  padding: 12px 16px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--fg);
+  text-decoration: none;
+}
+.cards .line { font-size: 0.9rem; }
+
+.list { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.list th, .list td { text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+
+.events { padding-left: 20px; font-size: 0.9rem; }
+
+pre {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+  overflow-x: auto;
+  font-size: 0.8rem;
+}
+
+code { font-size: 0.9em; }
+
+@media (max-width: 560px) {
+  .list th:nth-child(4), .list td:nth-child(4) { display: none; }
+  button { flex: 1 1 auto; }
+}
+
+.result:empty { display: none; }

@@ -1,0 +1,33 @@
+[Unit]
+Description=gamm (Google Ads MCP Manager)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=gamm
+Group=gamm
+Environment=GAMM_CONFIG=/etc/gamm/config.toml
+Environment=HOME=/var/lib/gamm
+ExecStart=/opt/gamm/app/.venv/bin/gamm serve
+Restart=on-failure
+RestartSec=5
+
+# The service can write only its database; code, settings and the credential are read-only.
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=yes
+ReadWritePaths=/var/lib/gamm
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectControlGroups=yes
+RestrictSUIDSGID=yes
+RestrictRealtime=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

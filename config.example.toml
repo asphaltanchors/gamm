@@ -1,0 +1,47 @@
+# gamm settings. Copy to /etc/gamm/config.toml (mode 640, owner root, group gamm)
+# and fill in. Nothing in here belongs in git.
+
+[server]
+# The address people and bots use. Passkeys are tied to this hostname, so pick
+# it before registering any. HTTPS is required except on localhost.
+public_url = "https://gamm.your-tailnet.ts.net"
+host = "127.0.0.1"          # listen locally; Tailscale Serve forwards HTTPS here
+port = 8080
+database = "/var/lib/gamm/gamm.db"
+timezone = "America/Los_Angeles"   # for dates in the change log and the approval pages
+
+[google_ads]
+# OAuth user credentials (authorized_user JSON) or a service account key, with
+# the https://www.googleapis.com/auth/adwords scope. See docs/deploy.md.
+credentials_file = "/etc/gamm/google-credentials.json"
+# Accounts gamm may change. The first is the default. Reads can reach any
+# account the credential can see.
+customer_ids = ["123-456-7890"]
+# login_customer_id = "111-222-3333"   # only if access goes through a manager account
+# developer_token = ""                # only if your Google Cloud project needs one
+
+[upstream]
+# Google's google-ads-mcp server, installed from upstream/requirements.txt.
+command = "/opt/gamm/upstream/bin/google-ads-mcp"
+args = []
+
+[approval]
+approver_name = "Your Name"   # shown in change-log rows
+ttl_hours = 48                # an approval must be applied within this time
+proposal_ttl_hours = 168      # an unapproved proposal expires after this
+
+[rules]
+min_target_roas = 2.0          # never set target ROAS below this (2.0 = 200%); remove the line for no floor
+max_budget_change_pct = 20     # largest budget move in one change, in percent; remove the line for no cap
+# max_daily_budget = 500       # ceiling for any campaign's daily budget, in account currency
+one_open_change_per = "campaign"   # or "account": only one open change in the whole account
+max_changes_per_proposal = 20
+max_keywords_per_change = 100
+
+# Freeze windows block proposing and applying. Dates are inclusive, in the
+# timezone above. Leave campaign_ids empty to freeze the whole account.
+# [[rules.freeze]]
+# start = "2026-10-02"
+# end = "2026-10-23"
+# campaign_ids = []
+# reason = "let the reset settle"

@@ -1,0 +1,66 @@
+{% extends "base.html" %}
+{% block title %}#{{ change.change_id }} {{ change.title }} · gamm{% endblock %}
+{% block main %}
+<p class="crumbs"><a href="/">All changes</a></p>
+<h1>#{{ change.change_id }} {{ change.title }}</h1>
+<p><span class="status status-{{ change.status }}">{{ change.status | replace("_", " ") }}</span>
+  <span class="muted">Account {{ change.customer_id }}</span></p>
+
+<section class="what">
+  <h2>What will change</h2>
+  <p class="muted small">Written by gamm from the live account when the change was proposed. Google's dry run accepted it.</p>
+  <ol>
+    {% for line in change.summary %}<li>{{ line }}</li>{% endfor %}
+  </ol>
+</section>
+
+{% if change.status == "proposed" %}
+<section class="decide" id="decide" data-change-id="{{ change.change_id }}">
+  {% if has_passkeys %}
+  <button type="button" class="approve" data-decide="approve">Approve with passkey</button>
+  <button type="button" class="reject" data-decide="reject">Reject</button>
+  <p class="muted small">Your device will ask for Face ID, Touch ID or your security key. Once approved, a bot applies it{% if change.expires_at %}; this proposal expires {{ change.expires_at | local }}{% endif %}.</p>
+  {% else %}
+  <p class="notice">No passkey is registered yet. On the server, run <code>gamm passkeys invite</code>.</p>
+  {% endif %}
+  <p class="result" id="decide-result" role="status"></p>
+</section>
+{% elif change.status == "approved" %}
+<p class="notice">Approved by passkey “{{ change.decided_by }}” {{ change.decided_at | local }}. Waiting for a bot to apply it{% if change.expires_at %} before {{ change.expires_at | local }}{% endif %}.</p>
+{% endif %}
+
+<section class="claims">
+  <h2>The proposing bot says</h2>
+  <p class="muted small">Proposed by {{ change.proposed_by }}, {{ change.proposed_at | local }}. This text comes from the bot; the list above is what will actually change.</p>
+  <dl>
+    <dt>Why</dt><dd>{{ change.why }}</dd>
+    {% if change.expected_effect %}<dt>Expected effect</dt><dd>{{ change.expected_effect }}</dd>{% endif %}
+    {% if change.how_to_check %}<dt>How to check it</dt><dd>{{ change.how_to_check }}</dd>{% endif %}
+    {% if change.how_to_undo %}<dt>How to undo it</dt><dd>{{ change.how_to_undo }}</dd>{% endif %}
+    {% if change.judge_on %}<dt>Judge on</dt><dd>{{ change.judge_on }}</dd>{% endif %}
+  </dl>
+</section>
+
+{% if change.error or change.result %}
+<section>
+  <h2>Result</h2>
+  {% if change.error %}<p class="notice">{{ change.error }}</p>{% endif %}
+  {% if change.applied_at %}<p>Applied {{ change.applied_at | local }} by {{ change.applied_by }}.</p>{% endif %}
+  {% if change.judgement %}<p><strong>Judged {{ change.judged_at | local }}:</strong> {{ change.judgement }}</p>{% endif %}
+</section>
+{% endif %}
+
+<section>
+  <h2>History</h2>
+  <ol class="events">
+    {% for e in change.events %}
+    <li><span class="muted">{{ e.at | local }}</span> {{ e.event | replace("_", " ") }} · {{ e.actor }}</li>
+    {% endfor %}
+  </ol>
+</section>
+
+<details>
+  <summary>Exact request</summary>
+  <pre>{{ change.plans | tojson(indent=2) }}</pre>
+</details>
+{% endblock %}
