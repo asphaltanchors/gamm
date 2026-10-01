@@ -25,14 +25,32 @@ def cmd_serve(args) -> None:
     serve(config)
 
 
+def _client_setup(url: str, key: str) -> str:
+    """Ready-to-paste connection snippets for common MCP clients."""
+    import json
+    import shlex
+
+    header = f"Authorization: Bearer {key}"
+    http = {"type": "http", "url": url, "headers": {"Authorization": f"Bearer {key}"}}
+    blocks = [
+        ("Claude Code", f"claude mcp add --transport http --scope user gamm {shlex.quote(url)} \\\n  --header {shlex.quote(header)}"),
+        ("Claude Code project config (.mcp.json)", json.dumps({"mcpServers": {"gamm": http}}, indent=2)),
+        ("Cursor (~/.cursor/mcp.json)", json.dumps({"mcpServers": {"gamm": {"url": url, "headers": {"Authorization": f"Bearer {key}"}}}}, indent=2)),
+        ("Clients that only speak stdio (Claude Desktop config, via mcp-remote)", json.dumps(
+            {"mcpServers": {"gamm": {"command": "npx", "args": ["-y", "mcp-remote", url, "--header", "Authorization:${GAMM_AUTH}"], "env": {"GAMM_AUTH": f"Bearer {key}"}}}}, indent=2)),
+        ("Anything else", f"URL:     {url}\nHeader:  {header}"),
+    ]
+    return "\n\n".join(f"# {title}\n{body}" for title, body in blocks)
+
+
 def cmd_keys(args) -> None:
     from gamm import keys
 
-    _, db = _setup(args)
+    config, db = _setup(args)
     if args.action == "create":
         key = keys.create_key(db, args.name)
         print(f"Key for {args.name!r} (shown once; store it in the bot's MCP settings):\n\n  {key}\n")
-        print("Send it as the header:  Authorization: Bearer <key>")
+        print(_client_setup(f"{config.public_url}/mcp", key))
     elif args.action == "revoke":
         print("revoked" if keys.revoke_key(db, args.name) else f"no active key named {args.name!r}")
     else:

@@ -130,7 +130,9 @@ gamm keys create claude-code
 gamm keys create assistant-bot
 ```
 
-Each key is shown once. Give each agent the MCP URL
+Each key is shown once, followed by ready-to-paste setup for Claude Code
+(`claude mcp add ...`), `.mcp.json`, Cursor and stdio-only clients, with your
+URL and the key already filled in. Otherwise give each agent the MCP URL
 `https://gamm.<your-tailnet>.ts.net/mcp` and the header
 `Authorization: Bearer <key>`. Agents that share a key can send their own name
 in the `agent` argument of gamm's tools or an `X-Gamm-Agent` header; it is
