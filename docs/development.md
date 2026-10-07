@@ -71,7 +71,7 @@ they link and unlink assets and never delete one.
 | `asset_group_status` | the asset group's campaign | |
 | `shared_negative_keywords` | every campaign using the list (account-level lists: the account) | keywords per change |
 | `conversion_goal` | the campaign, or the account for default goals | |
-| `asset_group_text` | the asset group's campaign | Lengths: headline 30, long headline 90, description 90, business name 25. Counts after the change: headlines 3–15, long headlines 1–5, descriptions 2–5 with at least one of 60 characters or fewer, exactly 1 business name. No duplicate adds; removals must be linked. Reuses an identical existing TEXT asset. |
+| `asset_group_text` | the asset group's campaign | Lengths: headline 30, long headline 90, description 90, business name 25. Counts after the change, of the advertiser's own assets (Google-generated ones don't count, and can be removed): headlines 3–15, long headlines 1–5, descriptions 2–5 with at least one of 60 characters or fewer, exactly 1 business name. No duplicate adds; removals must be linked. Reuses an identical existing TEXT asset. |
 | `asset_group_video` | the asset group's campaign | YouTube IDs only (11 characters); at most 5 videos. The title shown comes from the account, or from YouTube's oEmbed for a video new to the account; a video YouTube won't describe is refused. |
 | `sitelinks` | the campaign, or the account for `scope: account` | Link text 25, descriptions 35 (both or neither). gamm loads each new `final_url` itself, following redirects only on `allowed_url_hosts`, and refuses anything but HTTP 200. Removes by link text. |
 | `callouts` | as `sitelinks` | Text 25. Reuses an identical existing CALLOUT asset. |

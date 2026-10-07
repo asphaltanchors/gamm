@@ -396,7 +396,7 @@ class GoogleAdsBackend:
     def asset_group_assets(self, customer_id: str, asset_group_id: str) -> list[dict]:
         rows = self._search(
             customer_id,
-            f"SELECT asset_group_asset.resource_name, asset_group_asset.field_type, {_ASSET_FIELDS} "
+            f"SELECT asset_group_asset.resource_name, asset_group_asset.field_type, asset_group_asset.source, {_ASSET_FIELDS} "
             f"FROM asset_group_asset WHERE asset_group.id = {int(asset_group_id)} "
             "AND asset_group_asset.status != 'REMOVED'",
         )
@@ -404,6 +404,7 @@ class GoogleAdsBackend:
             {
                 "resource_name": r.asset_group_asset.resource_name,
                 "field_type": _enum_name(r.asset_group_asset.field_type),
+                "source": _enum_name(r.asset_group_asset.source),
                 "asset": _asset(r.asset),
             }
             for r in rows

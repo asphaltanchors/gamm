@@ -177,13 +177,14 @@ class FakeAccount:
         self.assets[asset_id] = asset
         return asset
 
-    def link_to_group(self, group_id: str, asset: dict, field_type: str) -> None:
+    def link_to_group(self, group_id: str, asset: dict, field_type: str, source: str = "ADVERTISER") -> None:
         self.group_links.append(
             {
                 "resource_name": f"customers/{CID}/assetGroupAssets/{group_id}~{asset['id']}~{field_type}",
                 "group_id": group_id,
                 "asset_id": asset["id"],
                 "field_type": field_type,
+                "source": source,
             }
         )
 
@@ -231,7 +232,12 @@ class FakeAccount:
 
     def asset_group_assets(self, customer_id, asset_group_id):
         return [
-            {"resource_name": link["resource_name"], "field_type": link["field_type"], "asset": copy.deepcopy(self.assets[link["asset_id"]])}
+            {
+                "resource_name": link["resource_name"],
+                "field_type": link["field_type"],
+                "source": link["source"],
+                "asset": copy.deepcopy(self.assets[link["asset_id"]]),
+            }
             for link in self.group_links
             if link["group_id"] == str(asset_group_id)
         ]
