@@ -8,6 +8,7 @@ into one atomic GoogleAdsService.Mutate request. Tests swap in a fake.
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol
 
@@ -442,15 +443,21 @@ class GoogleAdsBackend:
     # -- the web ----------------------------------------------------------
 
     def http_get(self, url: str) -> dict:
-        """One GET, without following redirects: {"status", "location"}."""
+        """One GET, without following redirects: {"status", "location"}.
+
+        Shopify sometimes answers 429 for a few seconds; wait and ask again
+        rather than refuse a good link.
+        """
         try:
-            with (
-                httpx.Client(follow_redirects=False, timeout=15, headers={"User-Agent": HTTP_USER_AGENT}) as client,
-                client.stream("GET", url) as response,
-            ):
-                return {"status": response.status_code, "location": response.headers.get("location")}
+            with httpx.Client(follow_redirects=False, timeout=15, headers={"User-Agent": HTTP_USER_AGENT}) as client:
+                for attempt in range(3):
+                    with client.stream("GET", url) as response:
+                        if response.status_code != 429 or attempt == 2:
+                            return {"status": response.status_code, "location": response.headers.get("location")}
+                    time.sleep(2 * (attempt + 1))
         except httpx.HTTPError as exc:
             raise AdsError(f"couldn't load {url}: {exc}") from exc
+        raise AssertionError("unreachable")
 
     def youtube_title(self, video_id: str) -> str | None:
         """The public title of a public or unlisted YouTube video, or None if YouTube won't say."""
