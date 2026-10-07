@@ -367,3 +367,16 @@ def test_readback_matches_current(account):
     data = EXAMPLES[1]
     p = plan(account, **data)
     assert values_match(current_values(change(**data), account, CID), p.before)
+
+
+@pytest.mark.parametrize(("campaign_id", "selected"), [("100", True), (None, False)])
+def test_linked_assets_query_selects_what_it_filters(campaign_id, selected):
+    from gamm.ads import GoogleAdsBackend
+
+    queries = []
+    backend = object.__new__(GoogleAdsBackend)
+    backend._search = lambda customer_id, query: queries.append(query) or []
+    backend.linked_assets(CID, campaign_id, ["SITELINK"])
+    select, where = queries[0].split(" WHERE ")
+    assert ("campaign.id" in select) is selected
+    assert ("campaign.id = 100" in where) is selected

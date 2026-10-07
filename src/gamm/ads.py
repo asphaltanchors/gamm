@@ -416,9 +416,10 @@ class GoogleAdsBackend:
         link = "campaign_asset" if campaign_id else "customer_asset"
         types = ", ".join(_quote(t) for t in field_types)
         where = f"campaign.id = {int(campaign_id)} AND " if campaign_id else ""
+        campaign = "campaign.id, " if campaign_id else ""  # Google requires a filtered field to be selected
         rows = self._search(
             customer_id,
-            f"SELECT {link}.resource_name, {link}.field_type, {link}.status, {_ASSET_FIELDS} FROM {link} "
+            f"SELECT {campaign}{link}.resource_name, {link}.field_type, {link}.status, {_ASSET_FIELDS} FROM {link} "
             f"WHERE {where}{link}.field_type IN ({types}) AND {link}.status != 'REMOVED'",
         )
         return [
