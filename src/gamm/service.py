@@ -28,6 +28,7 @@ from gamm.changes import (
     InvalidChange,
     Plan,
     RuleViolation,
+    combined_ops,
     current_values,
     plan_change,
     values_match,
@@ -167,7 +168,7 @@ class ChangeService:
         account_wide = any(p.account_wide for p in plans)
         self._check_freeze(campaign_ids, account_wide)
 
-        ops = [op for plan in plans for op in plan.ops]
+        ops = combined_ops(plans)
         try:
             self.backend.mutate(cid, ops, validate_only=True)
         except AdsError as exc:
@@ -276,7 +277,7 @@ class ChangeService:
             raise ChangeError(f"change #{change_id} was not applied: {exc}") from exc
 
         # 3. Write, in one atomic request.
-        ops = [op for plan in plans for op in plan.ops]
+        ops = combined_ops(plans)
         try:
             resource_names = self.backend.mutate(cid, ops, validate_only=False)
         except AdsError as exc:

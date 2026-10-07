@@ -13,9 +13,11 @@ The approval page shows the Plan's summary, never text written by the bot.
 from __future__ import annotations
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Annotated, Any, Literal
+from urllib.parse import urljoin, urlparse
 
 from pydantic import BaseModel, Field, TypeAdapter
 
@@ -110,6 +112,75 @@ class ConversionGoal(BaseModel):
     campaign_id: str | None = Field(default=None, description="Omit to change the account default goals.")
 
 
+ScopeArg = Field(description="'account' for the whole account, or a campaign ID.")
+TextField = Literal["HEADLINE", "LONG_HEADLINE", "DESCRIPTION", "BUSINESS_NAME"]
+SnippetHeader = Literal[
+    "Amenities", "Brands", "Courses", "Degree programs", "Destinations", "Featured hotels",
+    "Insurance coverage", "Models", "Neighborhoods", "Service catalog", "Shows", "Styles", "Types",
+]
+
+
+class AssetGroupText(BaseModel):
+    """Add or remove headlines, long headlines, descriptions or the business name of a Performance Max asset group."""
+
+    kind: Literal["asset_group_text"]
+    asset_group_id: str
+    field_type: TextField
+    add: list[str] = Field(default_factory=list, description="Texts to add, exactly as they should appear.")
+    remove: list[str] = Field(default_factory=list, description="Linked texts to remove (the asset itself is kept).")
+
+
+class AssetGroupVideo(BaseModel):
+    """Add or remove YouTube videos in a Performance Max asset group."""
+
+    kind: Literal["asset_group_video"]
+    asset_group_id: str
+    add: list[str] = Field(default_factory=list, description="YouTube video IDs, e.g. 'dQw4w9WgXcQ'.")
+    remove: list[str] = Field(default_factory=list, description="Asset IDs or YouTube video IDs of linked videos.")
+
+
+class Sitelink(BaseModel):
+    link_text: str = Field(description="Up to 25 characters.")
+    final_url: str = Field(description="Must load (HTTP 200) on a host in the allowed_url_hosts rule.")
+    description1: str = Field(default="", description="Up to 35 characters; give both descriptions or neither.")
+    description2: str = Field(default="", description="Up to 35 characters.")
+
+
+class Sitelinks(BaseModel):
+    """Add or remove sitelinks for the account or one campaign. Removing unlinks; the asset is kept."""
+
+    kind: Literal["sitelinks"]
+    scope: str = ScopeArg
+    add: list[Sitelink] = Field(default_factory=list)
+    remove: list[str] = Field(default_factory=list, description="Link texts of linked sitelinks to remove.")
+
+
+class Callouts(BaseModel):
+    """Add or remove callouts for the account or one campaign. Removing unlinks; the asset is kept."""
+
+    kind: Literal["callouts"]
+    scope: str = ScopeArg
+    add: list[str] = Field(default_factory=list, description="Callout texts, up to 25 characters each.")
+    remove: list[str] = Field(default_factory=list, description="Texts of linked callouts to remove.")
+
+
+class StructuredSnippet(BaseModel):
+    """Set the values of the structured snippet with this header, for the account or one campaign."""
+
+    kind: Literal["structured_snippet"]
+    scope: str = ScopeArg
+    header: SnippetHeader
+    values: list[str] = Field(description="3 to 10 values, up to 25 characters each.")
+
+
+class UnlinkAssets(BaseModel):
+    """Unlink price, promotion, sitelink, callout or structured snippet assets from the account or one campaign."""
+
+    kind: Literal["unlink_assets"]
+    scope: str = ScopeArg
+    asset_ids: list[str] = Field(min_length=1)
+
+
 Change = Annotated[
     CampaignStatus
     | AssetGroupStatus
@@ -118,7 +189,13 @@ Change = Annotated[
     | CampaignNegativeKeywords
     | SharedNegativeKeywords
     | CampaignUrlSuffix
-    | ConversionGoal,
+    | ConversionGoal
+    | AssetGroupText
+    | AssetGroupVideo
+    | Sitelinks
+    | Callouts
+    | StructuredSnippet
+    | UnlinkAssets,
     Field(discriminator="kind"),
 ]
 CHANGE_LIST = TypeAdapter(list[Change])
@@ -145,6 +222,29 @@ class Plan:
             "campaign_ids": sorted(self.campaign_ids),
             "account_wide": self.account_wide,
         }
+
+
+# New assets get temporary names with negative IDs so that the link created in
+# the same request can point at them. Each plan numbers its own from -1;
+# combined_ops renumbers them so they're unique across the whole request.
+_TEMP_ASSET = re.compile(r"^(customers/\d+/assets/)-(\d+)$")
+
+
+def _shift_temporary(value: Any, offset: int) -> Any:
+    match = _TEMP_ASSET.match(value) if isinstance(value, str) else None
+    return f"{match.group(1)}-{int(match.group(2)) + offset}" if match else value
+
+
+def combined_ops(plans: list[Plan]) -> list[OpSpec]:
+    """Every plan's writes, in order, as one request."""
+    ops: list[OpSpec] = []
+    offset = 0
+    for plan in plans:
+        for op in plan.ops:
+            fields = {k: _shift_temporary(v, offset) for k, v in op.fields.items()}
+            ops.append(OpSpec(op.resource, op.action, _shift_temporary(op.resource_name, offset), fields))
+        offset += sum(1 for op in plan.ops if op.resource == "asset" and op.action == "create")
+    return ops
 
 
 def values_match(a: dict[str, Any], b: dict[str, Any]) -> bool:
@@ -223,9 +323,13 @@ def _asset_group_status_current(ch: AssetGroupStatus, reader: AccountReader, cid
     return {"status": _asset_group(reader, cid, ch.asset_group_id)["status"]}
 
 
+def _group_label(group: dict) -> str:
+    return f"asset group “{group['name']}” ({group['id']}) in campaign “{group['campaign_name']}”"
+
+
 def _asset_group_status_plan(ch: AssetGroupStatus, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
     group = _asset_group(reader, cid, ch.asset_group_id)
-    label = f"asset group “{group['name']}” ({group['id']}) in campaign “{group['campaign_name']}”"
+    label = _group_label(group)
     if group["status"] == ch.status:
         raise InvalidChange(f"{label} is already {ch.status}")
     return Plan(
@@ -527,6 +631,497 @@ def _goal_plan(ch: ConversionGoal, reader: AccountReader, cid: str, rules: Rules
     )
 
 
+# -- assets: shared helpers -------------------------------------------------------------------
+
+
+def _clean(text: str) -> str:
+    return " ".join(text.split())
+
+
+def _fold(text: str) -> str:
+    return _clean(text).casefold()
+
+
+def _texts(texts: list[str]) -> str:
+    return ", ".join(f"“{t}”" for t in texts)
+
+
+def _check_unique(items: list[str], what: str, key: Callable[[str], str] = _clean) -> None:
+    seen: set[str] = set()
+    repeated = []
+    for item in items:
+        if key(item) in seen:
+            repeated.append(item)
+        seen.add(key(item))
+    if repeated:
+        raise InvalidChange(f"{what} listed more than once: {_texts(repeated)}")
+
+
+def _check_lengths(texts: list[str], limit: int, what: str) -> None:
+    if any(not t for t in texts):
+        raise InvalidChange(f"{what} can't be empty")
+    too_long = [f"“{t}” ({len(t)})" for t in texts if len(t) > limit]
+    if too_long:
+        raise InvalidChange(f"{what} can be at most {limit} characters: {', '.join(too_long)}")
+
+
+class _NewAssets:
+    """The assets one plan creates, under temporary names (see combined_ops)."""
+
+    def __init__(self, cid: str):
+        self.cid = cid
+        self.ops: list[OpSpec] = []
+
+    def create(self, fields: dict) -> str:
+        name = f"customers/{self.cid}/assets/-{len(self.ops) + 1}"
+        self.ops.append(OpSpec("asset", "create", name, fields))
+        return name
+
+    def reuse_or_create(self, reader: AccountReader, asset_type: str, value: str, fields: dict) -> str:
+        existing = reader.find_asset(self.cid, asset_type, value)
+        return existing["resource_name"] if existing else self.create(fields)
+
+
+def _scope(reader: AccountReader, cid: str, scope: str) -> tuple[dict | None, str]:
+    """The campaign a scope names (None for the account), and how to describe it."""
+    if scope.strip().lower() == "account":
+        return None, "the account"
+    campaign = _campaign(reader, cid, scope.strip())
+    return campaign, _label(campaign)
+
+
+def _scope_rules(campaign: dict | None) -> dict:
+    return {"campaign_ids": {campaign["id"]}} if campaign else {"account_wide": True}
+
+
+def _scope_links(reader: AccountReader, cid: str, campaign: dict | None, field_types: list[str]) -> list[dict]:
+    return reader.linked_assets(cid, campaign["id"] if campaign else None, field_types)
+
+
+def _link(cid: str, campaign: dict | None, asset: str, field_type: str) -> OpSpec:
+    if campaign:
+        fields = {"campaign": f"customers/{cid}/campaigns/{campaign['id']}", "asset": asset, "field_type": field_type}
+        return OpSpec("campaign_asset", "create", None, fields)
+    return OpSpec("customer_asset", "create", None, {"asset": asset, "field_type": field_type})
+
+
+def _unlink(campaign: dict | None, link: dict) -> OpSpec:
+    return OpSpec("campaign_asset" if campaign else "customer_asset", "remove", link["resource_name"])
+
+
+def _missing_or_present(
+    add: list[str], remove: list[str], linked: dict[str, list[dict]], where: str, key: Callable[[str], str]
+) -> None:
+    already = [t for t in add if key(t) in linked]
+    if already:
+        raise InvalidChange(f"already in {where}: {_texts(already)}")
+    missing = [t for t in remove if key(t) not in linked]
+    if missing:
+        raise InvalidChange(f"not in {where}, so can't be removed: {_texts(missing)}")
+
+
+# -- asset_group_text ---------------------------------------------------------------------------
+
+# Performance Max limits: longest text, fewest and most per asset group.
+_TEXT_RULES = {
+    "HEADLINE": (30, 3, 15),
+    "LONG_HEADLINE": (90, 1, 5),
+    "DESCRIPTION": (90, 2, 5),
+    "BUSINESS_NAME": (25, 1, 1),
+}
+_SHORT_DESCRIPTION = 60
+
+
+def _group_links(reader: AccountReader, cid: str, asset_group_id: str, field_type: str) -> list[dict]:
+    return [link for link in reader.asset_group_assets(cid, asset_group_id) if link["field_type"] == field_type]
+
+
+def _ordered(adds: list[OpSpec], removes: list[OpSpec], count_now: int, minimum: int) -> list[OpSpec]:
+    """Removals first, so a full group has room, unless that would dip below the minimum part-way."""
+    return removes + adds if count_now - len(removes) >= minimum else adds + removes
+
+
+def _asset_group_text_current(ch: AssetGroupText, reader: AccountReader, cid: str) -> dict:
+    _asset_group(reader, cid, ch.asset_group_id)
+    return {"texts": sorted(link["asset"]["text"] for link in _group_links(reader, cid, ch.asset_group_id, ch.field_type))}
+
+
+def _asset_group_text_plan(ch: AssetGroupText, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    group = _asset_group(reader, cid, ch.asset_group_id)
+    where = _group_label(group)
+    label = ch.field_type.lower().replace("_", " ")
+    longest, fewest, most = _TEXT_RULES[ch.field_type]
+    add = [_clean(t) for t in ch.add]
+    remove = [_clean(t) for t in ch.remove]
+    if not add and not remove:
+        raise InvalidChange(f"give at least one {label} to add or remove")
+    _check_unique(add + remove, f"{label}s")
+    _check_lengths(add, longest, f"a {label}")
+
+    links = _group_links(reader, cid, group["id"], ch.field_type)
+    linked: dict[str, list[dict]] = {}
+    for link in links:
+        linked.setdefault(_clean(link["asset"]["text"]), []).append(link)
+    _missing_or_present(add, remove, linked, where, _clean)
+
+    before = sorted(link["asset"]["text"] for link in links)
+    after = sorted([t for t in before if _clean(t) not in remove] + add)
+    if not fewest <= len(after) <= most:
+        needs = f"exactly {fewest}" if fewest == most else f"{fewest} to {most}"
+        raise InvalidChange(f"{where} would have {len(after)} {label}s; Performance Max needs {needs}")
+    if ch.field_type == "DESCRIPTION" and not any(len(t) <= _SHORT_DESCRIPTION for t in after):
+        raise InvalidChange(f"Performance Max needs at least one description of {_SHORT_DESCRIPTION} characters or fewer")
+
+    new = _NewAssets(cid)
+    adds = [
+        OpSpec(
+            "asset_group_asset",
+            "create",
+            None,
+            {
+                "asset_group": group["resource_name"],
+                "asset": new.reuse_or_create(reader, "TEXT", t, {"text_asset.text": t}),
+                "field_type": ch.field_type,
+            },
+        )
+        for t in add
+    ]
+    removes = [OpSpec("asset_group_asset", "remove", link["resource_name"]) for t in remove for link in linked[t]]
+    summary = [f"Change the {label}s of {where} ({len(before)} now, {len(after)} after)"]
+    summary += [f"Add {label}: “{t}”" for t in add]
+    summary += [f"Remove {label}: “{t}”" for t in remove]
+    return Plan(
+        summary,
+        {"texts": before},
+        {"texts": after},
+        new.ops + _ordered(adds, removes, len(before), fewest),
+        campaign_ids={group["campaign_id"]},
+    )
+
+
+# -- asset_group_video ----------------------------------------------------------------------------
+
+_YOUTUBE_ID = re.compile(r"^[A-Za-z0-9_-]{11}$")
+_MAX_VIDEOS = 5
+
+
+def _video_label(video_id: str, title: str) -> str:
+    return f"“{title}” (youtu.be/{video_id})"
+
+
+def _asset_group_video_current(ch: AssetGroupVideo, reader: AccountReader, cid: str) -> dict:
+    _asset_group(reader, cid, ch.asset_group_id)
+    links = _group_links(reader, cid, ch.asset_group_id, "YOUTUBE_VIDEO")
+    return {"videos": sorted(link["asset"]["youtube_video_id"] for link in links)}
+
+
+def _asset_group_video_plan(ch: AssetGroupVideo, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    group = _asset_group(reader, cid, ch.asset_group_id)
+    where = _group_label(group)
+    add = [v.strip() for v in ch.add]
+    remove = [v.strip() for v in ch.remove]
+    if not add and not remove:
+        raise InvalidChange("give at least one video to add or remove")
+    bad = [v for v in add if not _YOUTUBE_ID.match(v)]
+    if bad:
+        raise InvalidChange(f"not YouTube video IDs (11 characters, e.g. dQw4w9WgXcQ): {', '.join(bad)}")
+    _check_unique(add + remove, "videos")
+
+    links = _group_links(reader, cid, group["id"], "YOUTUBE_VIDEO")
+    already = [v for v in add if any(link["asset"]["youtube_video_id"] == v for link in links)]
+    if already:
+        raise InvalidChange(f"already in {where}: {', '.join(already)}")
+    removing = []
+    for item in remove:
+        match = [link for link in links if item in (link["asset"]["id"], link["asset"]["youtube_video_id"])]
+        if not match:
+            raise InvalidChange(f"no video {item} in {where}, so it can't be removed")
+        removing += match
+
+    before = sorted(link["asset"]["youtube_video_id"] for link in links)
+    gone = {link["asset"]["youtube_video_id"] for link in removing}
+    after = sorted([v for v in before if v not in gone] + add)
+    if len(after) > _MAX_VIDEOS:
+        raise InvalidChange(f"{where} would have {len(after)} videos; Performance Max allows {_MAX_VIDEOS}")
+
+    new = _NewAssets(cid)
+    adds, summary = [], []
+    for video_id in add:
+        existing = reader.find_asset(cid, "YOUTUBE_VIDEO", video_id)
+        title = (existing or {}).get("youtube_video_title") or reader.youtube_title(video_id)
+        if not title:
+            raise InvalidChange(f"YouTube has no public or unlisted video {video_id}")
+        asset = existing["resource_name"] if existing else new.create({"youtube_video_asset.youtube_video_id": video_id})
+        adds.append(OpSpec("asset_group_asset", "create", None, {"asset_group": group["resource_name"], "asset": asset, "field_type": "YOUTUBE_VIDEO"}))
+        summary.append(f"Add video {_video_label(video_id, title)} to {where}")
+    for link in removing:
+        asset = link["asset"]
+        summary.append(
+            f"Remove video {_video_label(asset['youtube_video_id'], asset['youtube_video_title'] or '(untitled)')} "
+            f"(asset {asset['id']}) from {where}"
+        )
+    removes = [OpSpec("asset_group_asset", "remove", link["resource_name"]) for link in removing]
+    return Plan(summary, {"videos": before}, {"videos": after}, new.ops + removes + adds, campaign_ids={group["campaign_id"]})
+
+
+# -- sitelinks ----------------------------------------------------------------------------------------
+
+_REDIRECTS = (301, 302, 303, 307, 308)
+_MAX_REDIRECTS = 5
+
+
+def _landing_page(reader: AccountReader, url: str, rules: Rules) -> str:
+    """Loads url, following redirects, and returns where it ends. Refuses anything but HTTP 200 on an allowed host."""
+    if not rules.allowed_url_hosts:
+        raise RuleViolation("no allowed_url_hosts are configured, so gamm can't add links")
+    current = url
+    for _ in range(_MAX_REDIRECTS + 1):
+        parsed = urlparse(current)
+        if parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise InvalidChange(f"{current} isn't a web address")
+        host = parsed.hostname.lower()
+        if host not in rules.allowed_url_hosts:
+            raise RuleViolation(
+                f"{current} is on {host}, which isn't an allowed host ({', '.join(rules.allowed_url_hosts)})"
+            )
+        response = reader.http_get(current)
+        if response["status"] in _REDIRECTS and response.get("location"):
+            current = urljoin(current, response["location"])
+            continue
+        if response["status"] != 200:
+            at = f" (at {current})" if current != url else ""
+            raise InvalidChange(f"{url} returned HTTP {response['status']}{at}; links must load")
+        return current
+    raise InvalidChange(f"{url} redirects more than {_MAX_REDIRECTS} times")
+
+
+def _sitelink_view(asset: dict) -> dict:
+    return {
+        "link_text": asset["link_text"],
+        "final_url": (asset["final_urls"] or [""])[0],
+        "description1": asset["description1"],
+        "description2": asset["description2"],
+    }
+
+
+def _sorted_sitelinks(views: list[dict]) -> list[dict]:
+    return sorted(views, key=lambda v: (v["link_text"], v["final_url"], v["description1"], v["description2"]))
+
+
+def _sitelink_label(view: dict) -> str:
+    text = f"“{view['link_text']}” → {view['final_url']}"
+    if view["description1"] or view["description2"]:
+        text += f" (“{view['description1']}” / “{view['description2']}”)"
+    return text
+
+
+def _sitelinks_current(ch: Sitelinks, reader: AccountReader, cid: str) -> dict:
+    campaign, _ = _scope(reader, cid, ch.scope)
+    links = _scope_links(reader, cid, campaign, ["SITELINK"])
+    return {"sitelinks": _sorted_sitelinks([_sitelink_view(link["asset"]) for link in links])}
+
+
+def _sitelinks_plan(ch: Sitelinks, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    campaign, where = _scope(reader, cid, ch.scope)
+    if not ch.add and not ch.remove:
+        raise InvalidChange("give at least one sitelink to add or remove")
+    views = []
+    for item in ch.add:
+        view = {
+            "link_text": _clean(item.link_text),
+            "final_url": item.final_url.strip(),
+            "description1": _clean(item.description1),
+            "description2": _clean(item.description2),
+        }
+        _check_lengths([view["link_text"]], 25, "sitelink text")
+        if bool(view["description1"]) != bool(view["description2"]):
+            raise InvalidChange(f"sitelink “{view['link_text']}”: give both descriptions or neither")
+        if view["description1"]:
+            _check_lengths([view["description1"], view["description2"]], 35, "a sitelink description")
+        views.append(view)
+    remove = [_clean(t) for t in ch.remove]
+    _check_unique([v["link_text"] for v in views] + remove, "sitelinks", key=_fold)
+
+    links = _scope_links(reader, cid, campaign, ["SITELINK"])
+    linked: dict[str, list[dict]] = {}
+    for link in links:
+        linked.setdefault(_fold(link["asset"]["link_text"]), []).append(link)
+    _missing_or_present([v["link_text"] for v in views], remove, linked, where, _fold)
+
+    new = _NewAssets(cid)
+    adds, summary = [], []
+    for view in views:
+        landed = _landing_page(reader, view["final_url"], rules)
+        fields = {"sitelink_asset.link_text": view["link_text"], "final_urls": [view["final_url"]]}
+        if view["description1"]:
+            fields["sitelink_asset.description1"] = view["description1"]
+            fields["sitelink_asset.description2"] = view["description2"]
+        adds.append(_link(cid, campaign, new.create(fields), "SITELINK"))
+        redirect = f" (redirects to {landed})" if landed != view["final_url"] else ""
+        summary.append(f"Add sitelink to {where}: {_sitelink_label(view)}{redirect}")
+    removing = [link for t in remove for link in linked[_fold(t)]]
+    for link in removing:
+        summary.append(f"Remove sitelink from {where}: {_sitelink_label(_sitelink_view(link['asset']))}")
+
+    before = _sorted_sitelinks([_sitelink_view(link["asset"]) for link in links])
+    kept = [_sitelink_view(link["asset"]) for link in links if link not in removing]
+    return Plan(
+        summary,
+        {"sitelinks": before},
+        {"sitelinks": _sorted_sitelinks(kept + views)},
+        new.ops + [_unlink(campaign, link) for link in removing] + adds,
+        **_scope_rules(campaign),
+    )
+
+
+# -- callouts ---------------------------------------------------------------------------------------------
+
+
+def _callouts_current(ch: Callouts, reader: AccountReader, cid: str) -> dict:
+    campaign, _ = _scope(reader, cid, ch.scope)
+    return {"callouts": sorted(link["asset"]["text"] for link in _scope_links(reader, cid, campaign, ["CALLOUT"]))}
+
+
+def _callouts_plan(ch: Callouts, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    campaign, where = _scope(reader, cid, ch.scope)
+    add = [_clean(t) for t in ch.add]
+    remove = [_clean(t) for t in ch.remove]
+    if not add and not remove:
+        raise InvalidChange("give at least one callout to add or remove")
+    _check_lengths(add, 25, "a callout")
+    _check_unique(add + remove, "callouts", key=_fold)
+
+    links = _scope_links(reader, cid, campaign, ["CALLOUT"])
+    linked: dict[str, list[dict]] = {}
+    for link in links:
+        linked.setdefault(_fold(link["asset"]["text"]), []).append(link)
+    _missing_or_present(add, remove, linked, where, _fold)
+
+    new = _NewAssets(cid)
+    adds = [
+        _link(cid, campaign, new.reuse_or_create(reader, "CALLOUT", t, {"callout_asset.callout_text": t}), "CALLOUT")
+        for t in add
+    ]
+    removing = [link for t in remove for link in linked[_fold(t)]]
+    before = sorted(link["asset"]["text"] for link in links)
+    after = sorted([link["asset"]["text"] for link in links if link not in removing] + add)
+    summary = [f"Add callout to {where}: “{t}”" for t in add]
+    summary += [f"Remove callout from {where}: “{link['asset']['text']}”" for link in removing]
+    return Plan(
+        summary,
+        {"callouts": before},
+        {"callouts": after},
+        new.ops + [_unlink(campaign, link) for link in removing] + adds,
+        **_scope_rules(campaign),
+    )
+
+
+# -- structured_snippet ------------------------------------------------------------------------------------
+
+
+def _snippet_links(reader: AccountReader, cid: str, campaign: dict | None, header: str) -> list[dict]:
+    return [link for link in _scope_links(reader, cid, campaign, ["STRUCTURED_SNIPPET"]) if link["asset"]["header"] == header]
+
+
+def _snippet_current(ch: StructuredSnippet, reader: AccountReader, cid: str) -> dict:
+    campaign, _ = _scope(reader, cid, ch.scope)
+    return {"values": sorted(link["asset"]["values"] for link in _snippet_links(reader, cid, campaign, ch.header))}
+
+
+def _snippet_plan(ch: StructuredSnippet, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    campaign, where = _scope(reader, cid, ch.scope)
+    values = [_clean(v) for v in ch.values]
+    if not 3 <= len(values) <= 10:
+        raise InvalidChange(f"a structured snippet needs 3 to 10 values, not {len(values)}")
+    _check_lengths(values, 25, "a snippet value")
+    _check_unique(values, "snippet values", key=_fold)
+
+    links = _snippet_links(reader, cid, campaign, ch.header)
+    before = sorted(link["asset"]["values"] for link in links)
+    if before == [values]:
+        raise InvalidChange(f"the “{ch.header}” snippet of {where} already has these values")
+    new = _NewAssets(cid)
+    asset = new.create({"structured_snippet_asset.header": ch.header, "structured_snippet_asset.values": values})
+    now = "; ".join(", ".join(v) for v in before) or "no snippet with this header"
+    return Plan(
+        [f"Set the “{ch.header}” structured snippet of {where} to: {', '.join(values)} (now: {now})"],
+        {"values": before},
+        {"values": [values]},
+        new.ops + [_unlink(campaign, link) for link in links] + [_link(cid, campaign, asset, "STRUCTURED_SNIPPET")],
+        **_scope_rules(campaign),
+    )
+
+
+# -- unlink_assets -------------------------------------------------------------------------------------------
+
+_UNLINKABLE = ["PRICE", "PROMOTION", "SITELINK", "CALLOUT", "STRUCTURED_SNIPPET"]
+
+
+def _describe_asset(asset: dict, currency: str) -> str:
+    kind = asset["type"]
+    if kind == "SITELINK":
+        return f"sitelink {_sitelink_label(_sitelink_view(asset))}"
+    if kind == "CALLOUT":
+        return f"callout “{asset['text']}”"
+    if kind == "STRUCTURED_SNIPPET":
+        return f"structured snippet “{asset['header']}”: {', '.join(asset['values'])}"
+    if kind == "PRICE":
+        offers = "; ".join(
+            f"“{o['header']}” {money(o['price_micros'], o['currency'] or currency)} → {o['final_url']}" for o in asset["offerings"]
+        )
+        return f"price asset ({asset['price_type'].lower().replace('_', ' ')}): {offers or 'no offerings'}"
+    if kind == "PROMOTION":
+        parts = [f"promotion “{asset['target']}”"]
+        if asset["percent_off_micros"]:
+            parts.append(f"{asset['percent_off_micros'] / 10_000:g}% off")
+        if asset["money_off_micros"]:
+            parts.append(f"{money(asset['money_off_micros'], asset['currency'] or currency)} off")
+        if asset["end_date"]:
+            parts.append(f"ends {asset['end_date']}")
+        return ", ".join(parts) + (f" → {', '.join(asset['final_urls'])}" if asset["final_urls"] else "")
+    return kind.lower()
+
+
+def _unlink_ids(ch: UnlinkAssets) -> list[str]:
+    ids = [i.strip() for i in ch.asset_ids]
+    bad = [i for i in ids if not i.isdigit()]
+    if bad:
+        raise InvalidChange(f"asset IDs are numbers: {', '.join(bad)}")
+    _check_unique(ids, "asset IDs")
+    return ids
+
+
+def _unlink_current(ch: UnlinkAssets, reader: AccountReader, cid: str) -> dict:
+    campaign, _ = _scope(reader, cid, ch.scope)
+    ids = set(_unlink_ids(ch))
+    return {"linked": sorted({link["asset"]["id"] for link in _scope_links(reader, cid, campaign, _UNLINKABLE)} & ids)}
+
+
+def _unlink_plan(ch: UnlinkAssets, reader: AccountReader, cid: str, rules: Rules, currency: str) -> Plan:
+    campaign, where = _scope(reader, cid, ch.scope)
+    ids = _unlink_ids(ch)
+    links = _scope_links(reader, cid, campaign, _UNLINKABLE)
+    missing = [i for i in ids if not any(link["asset"]["id"] == i for link in links)]
+    if missing:
+        raise InvalidChange(
+            f"not linked to {where} as a price, promotion, sitelink, callout or structured snippet: {', '.join(missing)}"
+        )
+    removing = [link for link in links if link["asset"]["id"] in ids]
+    summary = [
+        f"Unlink asset {link['asset']['id']} from {where}"
+        + (" (link paused)" if link.get("status") == "PAUSED" else "")
+        + f": {_describe_asset(link['asset'], currency)}"
+        for link in removing
+    ]
+    return Plan(
+        summary,
+        {"linked": sorted(ids)},
+        {"linked": []},
+        [_unlink(campaign, link) for link in removing],
+        **_scope_rules(campaign),
+    )
+
+
 # -- registry -------------------------------------------------------------------------------------
 
 KINDS: dict[str, tuple[Callable[..., dict], Callable[..., Plan]]] = {
@@ -538,6 +1133,12 @@ KINDS: dict[str, tuple[Callable[..., dict], Callable[..., Plan]]] = {
     "shared_negative_keywords": (_shared_negatives_current, _shared_negatives_plan),
     "campaign_url_suffix": (_url_suffix_current, _url_suffix_plan),
     "conversion_goal": (_goal_current, _goal_plan),
+    "asset_group_text": (_asset_group_text_current, _asset_group_text_plan),
+    "asset_group_video": (_asset_group_video_current, _asset_group_video_plan),
+    "sitelinks": (_sitelinks_current, _sitelinks_plan),
+    "callouts": (_callouts_current, _callouts_plan),
+    "structured_snippet": (_snippet_current, _snippet_plan),
+    "unlink_assets": (_unlink_current, _unlink_plan),
 }
 
 

@@ -10,6 +10,7 @@ dependencies = [
     "google-ads>=33,<34",
     "webauthn>=2.5,<3",
     "jinja2>=3.1",
+    "httpx>=0.27",
 ]
 
 [project.scripts]
@@ -18,7 +19,6 @@ gamm = "gamm.cli:main"
 [dependency-groups]
 dev = [
     "pytest>=8",
-    "httpx>=0.27",
 ]
 
 [build-system]

@@ -586,13 +586,13 @@ source = { editable = "." }
 dependencies = [
     { name = "fastmcp" },
     { name = "google-ads" },
+    { name = "httpx" },
     { name = "jinja2" },
     { name = "webauthn" },
 ]
 
 [package.dev-dependencies]
 dev = [
-    { name = "httpx" },
     { name = "pytest" },
 ]
 
@@ -600,15 +600,13 @@ dev = [
 requires-dist = [
     { name = "fastmcp", specifier = ">=4.0.10,<5" },
     { name = "google-ads", specifier = ">=33,<34" },
+    { name = "httpx", specifier = ">=0.27" },
     { name = "jinja2", specifier = ">=3.1" },
     { name = "webauthn", specifier = ">=2.5,<3" },
 ]
 
 [package.metadata.requires-dev]
-dev = [
-    { name = "httpx", specifier = ">=0.27" },
-    { name = "pytest", specifier = ">=8" },
-]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "google-ads"

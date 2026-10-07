@@ -158,3 +158,12 @@ def test_decided_change_has_no_options(client, config, db, proposals):
     propose(proposals)
     assert decide(client, 1, "approve", authenticator).status_code == 200
     assert client.post("/changes/1/options", json={"action": "approve"}).status_code == 409
+
+
+def test_ad_text_is_shown_escaped(client, proposals):
+    change = propose(
+        proposals, kind="asset_group_text", asset_group_id="500", field_type="HEADLINE", add=["<b>Big</b> & bold"]
+    )
+    page = client.get(f"/changes/{change['change_id']}").text
+    assert "Add headline: “&lt;b&gt;Big&lt;/b&gt; &amp; bold”" in page
+    assert "<b>Big</b>" not in page

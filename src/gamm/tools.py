@@ -210,6 +210,7 @@ def register_tools(mcp: FastMCP, service: ChangeService, config: Config) -> None
             "one_open_change_per": rules.one_open_change_per,
             "max_changes_per_proposal": rules.max_changes_per_proposal,
             "max_keywords_per_change": rules.max_keywords_per_change,
+            "allowed_url_hosts": list(rules.allowed_url_hosts),
             "freeze_windows": [
                 {"start": str(w.start), "end": str(w.end), "campaign_ids": list(w.campaign_ids) or "all", "reason": w.reason}
                 for w in rules.freeze

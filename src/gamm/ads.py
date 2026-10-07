@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from typing import Any, Protocol
 
 import google.auth
+import httpx
 from google.ads.googleads.client import GoogleAdsClient
 from google.ads.googleads.errors import GoogleAdsException
 from google.protobuf import field_mask_pb2
@@ -36,7 +37,9 @@ class OpSpec:
 
     resource: the MutateOperation field without "_operation", e.g. "campaign".
     action: "update", "create" or "remove".
-    resource_name: required for update and remove.
+    resource_name: required for update and remove. On create, an optional
+      temporary name with a negative ID (customers/1/assets/-1), so later
+      operations in the same request can refer to the new resource.
     fields: dotted field paths to values; enum values are given by name.
     """
 
@@ -65,6 +68,13 @@ class AccountReader(Protocol):
     def shared_set_campaigns(self, customer_id: str, shared_set_id: str) -> list[str]: ...
     def customer_conversion_goals(self, customer_id: str) -> list[dict]: ...
     def campaign_conversion_goals(self, customer_id: str, campaign_id: str) -> list[dict]: ...
+    def asset_group_assets(self, customer_id: str, asset_group_id: str) -> list[dict]: ...
+    def linked_assets(self, customer_id: str, campaign_id: str | None, field_types: list[str]) -> list[dict]: ...
+    def find_asset(self, customer_id: str, asset_type: str, value: str) -> dict | None: ...
+    # Not Google Ads, but read the same way: gamm checks these itself rather than
+    # trusting the bot's description of them.
+    def http_get(self, url: str) -> dict: ...
+    def youtube_title(self, video_id: str) -> str | None: ...
 
 
 class AdsBackend(AccountReader, Protocol):
@@ -77,7 +87,30 @@ _ENUM_FIELDS = {
     ("asset_group", "status"): "AssetGroupStatusEnum",
     ("campaign_criterion", "keyword.match_type"): "KeywordMatchTypeEnum",
     ("shared_criterion", "keyword.match_type"): "KeywordMatchTypeEnum",
+    ("asset_group_asset", "field_type"): "AssetFieldTypeEnum",
+    ("customer_asset", "field_type"): "AssetFieldTypeEnum",
+    ("campaign_asset", "field_type"): "AssetFieldTypeEnum",
 }
+
+# Every asset read selects these, so link lists can describe what they point to.
+_ASSET_FIELDS = (
+    "asset.id, asset.resource_name, asset.type, asset.final_urls, asset.text_asset.text, "
+    "asset.callout_asset.callout_text, asset.sitelink_asset.link_text, asset.sitelink_asset.description1, "
+    "asset.sitelink_asset.description2, asset.structured_snippet_asset.header, asset.structured_snippet_asset.values, "
+    "asset.youtube_video_asset.youtube_video_id, asset.youtube_video_asset.youtube_video_title, "
+    "asset.price_asset.type, asset.price_asset.price_offerings, asset.promotion_asset.promotion_target, "
+    "asset.promotion_asset.percent_off, asset.promotion_asset.money_amount_off.amount_micros, "
+    "asset.promotion_asset.money_amount_off.currency_code, asset.promotion_asset.end_date"
+)
+
+# How find_asset looks an asset up by its content.
+_FIND_ASSET = {
+    "TEXT": "asset.text_asset.text",
+    "CALLOUT": "asset.callout_asset.callout_text",
+    "YOUTUBE_VIDEO": "asset.youtube_video_asset.youtube_video_id",
+}
+
+HTTP_USER_AGENT = "Mozilla/5.0 (compatible; gamm landing-page check; +https://github.com/asphaltanchors/gamm)"
 
 
 def _set_path(message: Any, path: str, value: Any) -> None:
@@ -93,6 +126,46 @@ def _quote(value: str) -> str:
 
 def _enum_name(value: Any) -> str:
     return getattr(value, "name", str(value))
+
+
+def _asset(a: Any) -> dict:
+    """An asset as a plain dict: its id, type, URLs and the content for its type."""
+    kind = _enum_name(a.type_)
+    out: dict[str, Any] = {"id": str(a.id), "resource_name": a.resource_name, "type": kind, "final_urls": list(a.final_urls)}
+    if kind == "TEXT":
+        out["text"] = a.text_asset.text
+    elif kind == "CALLOUT":
+        out["text"] = a.callout_asset.callout_text
+    elif kind == "SITELINK":
+        s = a.sitelink_asset
+        out.update(link_text=s.link_text, description1=s.description1, description2=s.description2)
+    elif kind == "STRUCTURED_SNIPPET":
+        out.update(header=a.structured_snippet_asset.header, values=list(a.structured_snippet_asset.values))
+    elif kind == "YOUTUBE_VIDEO":
+        v = a.youtube_video_asset
+        out.update(youtube_video_id=v.youtube_video_id, youtube_video_title=v.youtube_video_title)
+    elif kind == "PRICE":
+        out["price_type"] = _enum_name(a.price_asset.type_)
+        out["offerings"] = [
+            {
+                "header": o.header,
+                "description": o.description,
+                "price_micros": o.price.amount_micros,
+                "currency": o.price.currency_code,
+                "final_url": o.final_url,
+            }
+            for o in a.price_asset.price_offerings
+        ]
+    elif kind == "PROMOTION":
+        p = a.promotion_asset
+        out.update(
+            target=p.promotion_target,
+            percent_off_micros=p.percent_off,  # 1,000,000 is 100%
+            money_off_micros=p.money_amount_off.amount_micros,
+            currency=p.money_amount_off.currency_code,
+            end_date=p.end_date,
+        )
+    return out
 
 
 class GoogleAdsBackend:
@@ -125,7 +198,7 @@ class GoogleAdsBackend:
                 sub.remove = spec.resource_name
             else:
                 target = sub.update if spec.action == "update" else sub.create
-                if spec.action == "update":
+                if spec.resource_name:
                     target.resource_name = spec.resource_name
                 for path, value in spec.fields.items():
                     enum = _ENUM_FIELDS.get((spec.resource, path))
@@ -319,6 +392,78 @@ class GoogleAdsBackend:
             }
             for r in rows
         ]
+
+    def asset_group_assets(self, customer_id: str, asset_group_id: str) -> list[dict]:
+        rows = self._search(
+            customer_id,
+            f"SELECT asset_group_asset.resource_name, asset_group_asset.field_type, {_ASSET_FIELDS} "
+            f"FROM asset_group_asset WHERE asset_group.id = {int(asset_group_id)} "
+            "AND asset_group_asset.status != 'REMOVED'",
+        )
+        return [
+            {
+                "resource_name": r.asset_group_asset.resource_name,
+                "field_type": _enum_name(r.asset_group_asset.field_type),
+                "asset": _asset(r.asset),
+            }
+            for r in rows
+        ]
+
+    def linked_assets(self, customer_id: str, campaign_id: str | None, field_types: list[str]) -> list[dict]:
+        """Assets linked to the account (campaign_id None) or to one campaign, of the given field types."""
+        link = "campaign_asset" if campaign_id else "customer_asset"
+        types = ", ".join(_quote(t) for t in field_types)
+        where = f"campaign.id = {int(campaign_id)} AND " if campaign_id else ""
+        rows = self._search(
+            customer_id,
+            f"SELECT {link}.resource_name, {link}.field_type, {link}.status, {_ASSET_FIELDS} FROM {link} "
+            f"WHERE {where}{link}.field_type IN ({types}) AND {link}.status != 'REMOVED'",
+        )
+        return [
+            {
+                "resource_name": getattr(r, link).resource_name,
+                "field_type": _enum_name(getattr(r, link).field_type),
+                "status": _enum_name(getattr(r, link).status),
+                "asset": _asset(r.asset),
+            }
+            for r in rows
+        ]
+
+    def find_asset(self, customer_id: str, asset_type: str, value: str) -> dict | None:
+        """The oldest asset of this type with exactly this text (or YouTube ID), to reuse it."""
+        rows = self._search(
+            customer_id,
+            f"SELECT {_ASSET_FIELDS} FROM asset WHERE asset.type = {_quote(asset_type)} "
+            f"AND {_FIND_ASSET[asset_type]} = {_quote(value)} ORDER BY asset.id LIMIT 1",
+        )
+        return _asset(rows[0].asset) if rows else None
+
+    # -- the web ----------------------------------------------------------
+
+    def http_get(self, url: str) -> dict:
+        """One GET, without following redirects: {"status", "location"}."""
+        try:
+            with (
+                httpx.Client(follow_redirects=False, timeout=15, headers={"User-Agent": HTTP_USER_AGENT}) as client,
+                client.stream("GET", url) as response,
+            ):
+                return {"status": response.status_code, "location": response.headers.get("location")}
+        except httpx.HTTPError as exc:
+            raise AdsError(f"couldn't load {url}: {exc}") from exc
+
+    def youtube_title(self, video_id: str) -> str | None:
+        """The public title of a public or unlisted YouTube video, or None if YouTube won't say."""
+        try:
+            response = httpx.get(
+                "https://www.youtube.com/oembed",
+                params={"url": f"https://www.youtube.com/watch?v={video_id}", "format": "json"},
+                timeout=15,
+            )
+        except httpx.HTTPError as exc:
+            raise AdsError(f"couldn't ask YouTube about video {video_id}: {exc}") from exc
+        if response.status_code != 200:
+            return None
+        return response.json().get("title") or None
 
 
 def _describe_failure(exc: GoogleAdsException) -> str:

@@ -37,6 +37,9 @@ max_budget_change_pct = 20     # largest budget move in one change, in percent; 
 one_open_change_per = "campaign"   # or "account": only one open change in the whole account
 max_changes_per_proposal = 20
 max_keywords_per_change = 100
+# Hostnames new sitelinks may link to. gamm loads each new link itself and
+# refuses it unless it ends at HTTP 200 on one of these. Empty: no new links.
+allowed_url_hosts = ["www.example.com", "example.com"]
 
 # Freeze windows block proposing and applying. Dates are inclusive, in the
 # timezone above. Leave campaign_ids empty to freeze the whole account.

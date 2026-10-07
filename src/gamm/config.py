@@ -45,6 +45,7 @@ class Rules:
     one_open_change_per: str = "campaign"  # "campaign" or "account"
     max_changes_per_proposal: int = 20
     max_keywords_per_change: int = 100
+    allowed_url_hosts: tuple[str, ...] = ()  # hostnames new sitelinks may point to
     freeze: tuple[FreezeWindow, ...] = ()
 
 
@@ -115,6 +116,9 @@ def _parse_rules(table: dict) -> Rules:
                 reason=str(item.get("reason", "")),
             )
         )
+    hosts = table.get("allowed_url_hosts", [])
+    if not isinstance(hosts, list) or not all(isinstance(h, str) and h.strip() for h in hosts):
+        raise ConfigError('rules.allowed_url_hosts must be a list of hostnames, e.g. ["www.example.com"]')
     per = table.get("one_open_change_per", "campaign")
     if per not in ("campaign", "account"):
         raise ConfigError('rules.one_open_change_per must be "campaign" or "account"')
@@ -125,6 +129,7 @@ def _parse_rules(table: dict) -> Rules:
         one_open_change_per=per,
         max_changes_per_proposal=int(table.get("max_changes_per_proposal", 20)),
         max_keywords_per_change=int(table.get("max_keywords_per_change", 100)),
+        allowed_url_hosts=tuple(h.strip().lower() for h in hosts),
         freeze=tuple(freeze),
     )
 

@@ -105,6 +105,47 @@ class FakeAccount:
                 for c, o, b in [("PURCHASE", "WEBSITE", True), ("PAGE_VIEW", "WEBSITE", False)]
             ]
         }
+        self.assets: dict[str, dict] = {}
+        self.group_links: list[dict] = []  # asset_group_asset
+        self.scope_links: list[dict] = []  # customer_asset and campaign_asset; campaign_id None = account
+        for i, text in enumerate(["Strong asphalt anchors", "Fast install", "Made in USA"]):
+            self.link_to_group("500", self.add_asset("TEXT", f"20{i}", text=text), "HEADLINE")
+        self.link_to_group("500", self.add_asset("TEXT", "210", text="Anchors for asphalt and pavers"), "LONG_HEADLINE")
+        self.link_to_group("500", self.add_asset("TEXT", "220", text="Holds up to 5,000 lbs in asphalt."), "DESCRIPTION")
+        self.link_to_group("500", self.add_asset("TEXT", "221", text="Install in minutes with a drill and epoxy, no concrete needed for any job."), "DESCRIPTION")
+        self.link_to_group("500", self.add_asset("TEXT", "230", text="Acme Anchors"), "BUSINESS_NAME")
+        self.link_to_group(
+            "500", self.add_asset("YOUTUBE_VIDEO", "240", youtube_video_id="aaaaaaaaaaa", youtube_video_title="How to install"), "YOUTUBE_VIDEO"
+        )
+        self.add_asset("TEXT", "250", text="Unused but reusable")
+        self.link_to_scope(None, self.add_asset("SITELINK", "300", link_text="FAQs", final_urls=["https://www.example.com/faq"], description1="", description2=""), "SITELINK")
+        self.link_to_scope("100", self.add_asset("SITELINK", "301", link_text="Kits", final_urls=["https://www.example.com/kits"], description1="Every size", description2="Ships fast"), "SITELINK")
+        self.link_to_scope(None, self.add_asset("CALLOUT", "310", text="Free shipping"), "CALLOUT")
+        self.add_asset("CALLOUT", "311", text="Made in USA")
+        self.link_to_scope(None, self.add_asset("STRUCTURED_SNIPPET", "320", header="Types", values=["Bolts", "Kits", "Epoxy"]), "STRUCTURED_SNIPPET")
+        self.link_to_scope(None, self.add_asset("STRUCTURED_SNIPPET", "321", header="Brands", values=["Acme", "Bolt", "Hold"]), "STRUCTURED_SNIPPET")
+        self.link_to_scope(
+            None,
+            self.add_asset(
+                "PRICE", "330", price_type="PRODUCT_CATEGORIES",
+                offerings=[{"header": "6-pack", "description": "Anchors", "price_micros": 65_000_000, "currency": "USD", "final_url": "https://www.example.com/p/1"}],
+            ),
+            "PRICE",
+        )
+        self.link_to_scope(
+            None,
+            self.add_asset("PROMOTION", "340", target="Anchor kits", percent_off_micros=100_000, money_off_micros=0, currency="", end_date="2023-12-31", final_urls=["https://www.example.com/kits"]),
+            "PROMOTION",
+            status="PAUSED",
+        )
+        # The web, as gamm's checks see it: url -> (status, location), video id -> title.
+        self.web = {
+            "https://www.example.com/new": (200, None),
+            "https://example.com/moved": (301, "https://www.example.com/new"),
+            "https://www.example.com/gone": (404, None),
+            "https://www.example.com/away": (302, "https://elsewhere.test/"),
+        }
+        self.videos = {"bbbbbbbbbbb": "Anchor demo", "ccccccccccc": "Customer story"}
         self.mutations: list[tuple[bool, list[OpSpec]]] = []
         self.fail_mutate: str | None = None
         self.fail_dry_run: str | None = None
@@ -130,6 +171,31 @@ class FakeAccount:
     @staticmethod
     def _goal(rn: str, category: str, origin: str, biddable: bool) -> dict:
         return {"resource_name": rn, "category": category, "origin": origin, "biddable": biddable}
+
+    def add_asset(self, kind: str, asset_id: str, **content) -> dict:
+        asset = {"id": asset_id, "resource_name": f"customers/{CID}/assets/{asset_id}", "type": kind, "final_urls": [], **content}
+        self.assets[asset_id] = asset
+        return asset
+
+    def link_to_group(self, group_id: str, asset: dict, field_type: str) -> None:
+        self.group_links.append(
+            {
+                "resource_name": f"customers/{CID}/assetGroupAssets/{group_id}~{asset['id']}~{field_type}",
+                "group_id": group_id,
+                "asset_id": asset["id"],
+                "field_type": field_type,
+            }
+        )
+
+    def link_to_scope(self, campaign_id: str | None, asset: dict, field_type: str, status: str = "ENABLED") -> None:
+        rn = (
+            f"customers/{CID}/campaignAssets/{campaign_id}~{asset['id']}~{field_type}"
+            if campaign_id
+            else f"customers/{CID}/customerAssets/{asset['id']}~{field_type}"
+        )
+        self.scope_links.append(
+            {"resource_name": rn, "campaign_id": campaign_id, "asset_id": asset["id"], "field_type": field_type, "status": status}
+        )
 
     # -- reader ---------------------------------------------------------------
 
@@ -163,11 +229,48 @@ class FakeAccount:
     def campaign_conversion_goals(self, customer_id, campaign_id):
         return copy.deepcopy(self.campaign_goals.get(str(campaign_id), []))
 
+    def asset_group_assets(self, customer_id, asset_group_id):
+        return [
+            {"resource_name": link["resource_name"], "field_type": link["field_type"], "asset": copy.deepcopy(self.assets[link["asset_id"]])}
+            for link in self.group_links
+            if link["group_id"] == str(asset_group_id)
+        ]
+
+    def linked_assets(self, customer_id, campaign_id, field_types):
+        return [
+            {
+                "resource_name": link["resource_name"],
+                "field_type": link["field_type"],
+                "status": link["status"],
+                "asset": copy.deepcopy(self.assets[link["asset_id"]]),
+            }
+            for link in self.scope_links
+            if link["campaign_id"] == campaign_id and link["field_type"] in field_types
+        ]
+
+    def find_asset(self, customer_id, asset_type, value):
+        key = {"TEXT": "text", "CALLOUT": "text", "YOUTUBE_VIDEO": "youtube_video_id"}[asset_type]
+        for asset_id in sorted(self.assets, key=int):
+            asset = self.assets[asset_id]
+            if asset["type"] == asset_type and asset.get(key) == value:
+                return copy.deepcopy(asset)
+        return None
+
+    def http_get(self, url):
+        if url not in self.web:
+            raise AdsError(f"couldn't load {url}: connection refused")
+        status, location = self.web[url]
+        return {"status": status, "location": location}
+
+    def youtube_title(self, video_id):
+        return self.videos.get(video_id)
+
     # -- writer ---------------------------------------------------------------
 
     def mutate(self, customer_id, ops, validate_only):
         self.mutations.append((validate_only, list(ops)))
         if validate_only:
+            self._check_temporary_names(ops)
             if self.fail_dry_run:
                 raise AdsError(self.fail_dry_run)
             return []
@@ -176,11 +279,78 @@ class FakeAccount:
         if self.ignore_writes:
             return []
         names = []
+        self._temp: dict[str, str] = {}
         for op in ops:
             names.append(self._apply(op))
         return names
 
+    @staticmethod
+    def _check_temporary_names(ops):
+        """Like Google: a temporary name is created once, before anything refers to it."""
+        created = set()
+        for op in ops:
+            if op.action == "create" and op.resource_name:
+                if op.resource_name in created:
+                    raise AdsError(f"temporary name {op.resource_name} used twice")
+                created.add(op.resource_name)
+            for value in op.fields.values():
+                if isinstance(value, str) and "/-" in value and value not in created:
+                    raise AdsError(f"unknown temporary resource {value}")
+
+    _ASSET_CONTENT = {
+        "text_asset.text": "text",
+        "callout_asset.callout_text": "text",
+        "sitelink_asset.link_text": "link_text",
+        "sitelink_asset.description1": "description1",
+        "sitelink_asset.description2": "description2",
+        "structured_snippet_asset.header": "header",
+        "structured_snippet_asset.values": "values",
+        "youtube_video_asset.youtube_video_id": "youtube_video_id",
+        "final_urls": "final_urls",
+    }
+
+    def _create_asset(self, op: OpSpec) -> str:
+        first = next(iter(op.fields)).split(".")[0]
+        kind = {
+            "text_asset": "TEXT",
+            "callout_asset": "CALLOUT",
+            "sitelink_asset": "SITELINK",
+            "structured_snippet_asset": "STRUCTURED_SNIPPET",
+            "youtube_video_asset": "YOUTUBE_VIDEO",
+        }[first]
+        self._next_id += 1
+        content = {self._ASSET_CONTENT[path]: value for path, value in op.fields.items()}
+        if kind == "SITELINK":
+            content = {"description1": "", "description2": "", **content}
+        if kind == "YOUTUBE_VIDEO":
+            content["youtube_video_title"] = self.videos.get(content["youtube_video_id"], "")
+        asset = self.add_asset(kind, str(self._next_id), **content)
+        if op.resource_name:
+            self._temp[op.resource_name] = asset["resource_name"]
+        return asset["resource_name"]
+
+    def _resolve(self, name: str) -> str:
+        if "/-" in name and name not in self._temp:
+            raise AdsError(f"unknown temporary resource {name}")
+        return self._temp.get(name, name)
+
     def _apply(self, op: OpSpec) -> str:
+        if op.resource == "asset":
+            return self._create_asset(op)
+        if op.resource in ("asset_group_asset", "customer_asset", "campaign_asset"):
+            links = self.group_links if op.resource == "asset_group_asset" else self.scope_links
+            if op.action == "remove":
+                if not any(link["resource_name"] == op.resource_name for link in links):
+                    raise AdsError(f"no such link {op.resource_name}")
+                links[:] = [link for link in links if link["resource_name"] != op.resource_name]
+                return op.resource_name
+            asset = self.assets[self._resolve(op.fields["asset"]).rsplit("/", 1)[1]]
+            if op.resource == "asset_group_asset":
+                self.link_to_group(op.fields["asset_group"].rsplit("/", 1)[1], asset, op.fields["field_type"])
+            else:
+                campaign = op.fields.get("campaign")
+                self.link_to_scope(campaign.rsplit("/", 1)[1] if campaign else None, asset, op.fields["field_type"])
+            return links[-1]["resource_name"]
         if op.resource == "campaign":
             campaign = self.campaigns[op.resource_name.rsplit("/", 1)[1]]
             for path, value in op.fields.items():

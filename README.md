@@ -75,6 +75,15 @@ Changes a proposal can contain:
 | `shared_negative_keywords` | Add or remove keywords in a shared negative keyword list |
 | `campaign_url_suffix` | Set a campaign's final URL suffix (UTM tags) |
 | `conversion_goal` | Use or stop using a conversion goal for bidding (account default or one campaign) |
+| `asset_group_text` | Add or remove a Performance Max asset group's headlines, long headlines, descriptions or business name |
+| `asset_group_video` | Add or remove YouTube videos in an asset group |
+| `sitelinks` | Add or remove sitelinks (account or one campaign) |
+| `callouts` | Add or remove callouts (account or one campaign) |
+| `structured_snippet` | Set the values of a structured snippet header (account or one campaign) |
+| `unlink_assets` | Unlink price, promotion, sitelink, callout or structured snippet assets |
+
+Asset changes only link and unlink; gamm never deletes an asset. Images aren't
+supported: they need a person to look at them.
 
 ## Rules
 
@@ -83,9 +92,12 @@ Set in the settings file. Each is optional.
 - `min_target_roas`: target ROAS is never set below this.
 - `max_budget_change_pct`: the largest budget move in one change.
 - `max_daily_budget`: a ceiling for any campaign's daily budget.
+- `allowed_url_hosts`: the hostnames new sitelinks may link to. gamm loads
+  each new link itself and refuses it unless it ends at HTTP 200 on one of them.
 - `one_open_change_per`: `campaign` (default) or `account`. A change touching
-  the whole account, such as account-default conversion goals, blocks every
-  other open change.
+  the whole account, such as account-default conversion goals or account-level
+  sitelinks, blocks every other open change. Asset group changes count against
+  their campaign.
 - Freeze windows: date ranges, for the whole account or listed campaigns, in
   which nothing can be proposed or applied.
 - Approvals expire (48 hours by default) and so do unapproved proposals (7 days).
